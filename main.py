@@ -324,10 +324,7 @@ class ActivationThread(QThread):
             lockdown = create_using_usbmux()
             values   = lockdown.get_value()
 
-            # ======================================================
-            # REMPLACEMENT DU TEST : vérification de ShouldHactivate
-            # au lieu de ActivationState
-            # ======================================================
+            # Vérification de hacktivation antérieure via ShouldHactivate
             if self.should_hactivate(lockdown):
                 self.success.emit('Device already hacktivated')
                 return
@@ -390,16 +387,8 @@ class MainWindow(QMainWindow):
         self.setFixedSize(500, 330)
         self.setContentsMargins(0, 0, 0, 0)
 
-        # ---- Image de fond ----
-        self.bg_label = QLabel(self)
-        self.bg_label.setGeometry(0, 0, 500, 330)
-        self.bg_label.setScaledContents(True)
-        bg_path = resource_path('fond.png')
-        if os.path.exists(bg_path):
-            self.bg_label.setPixmap(QPixmap(bg_path))
-        else:
-            self.bg_label.setStyleSheet("background: #e8f0fe;")
-        self.bg_label.lower()
+        # ---- Fond supprimé (plus de QLabel) ----
+        # On garde simplement la fenêtre avec un fond blanc/transparent
 
         # ---- Logo comme icône ----
         logo_path = resource_path('logo.png')
@@ -476,7 +465,7 @@ class MainWindow(QMainWindow):
 
         # ---- Style global ----
         self.setStyleSheet("""
-            QMainWindow { background: transparent; }
+            QMainWindow { background: #f0f4f8; }
             QLabel { background-color: rgba(255,255,255,0.75); border-radius: 4px; padding: 2px 4px; }
             QLabel#statusLabel { color: #004ec5; font-weight: bold; background-color: rgba(255,255,255,0.85); }
             QProgressBar {
@@ -529,10 +518,11 @@ class MainWindow(QMainWindow):
             except Exception:
                 app_uuid = udid
 
+            # ==== ECID en décimal (valeur brute) ====
             try:
                 chip_id = lockdown.get_value(key='UniqueChipID')
                 if isinstance(chip_id, int):
-                    ecid = hex(chip_id).upper().replace('0X', '')
+                    ecid = str(chip_id)          # ECID décimal (ex: 123456789)
                 else:
                     ecid = str(chip_id)
             except Exception:
@@ -663,7 +653,7 @@ class MainWindow(QMainWindow):
             lbl_msg = QLabel('Please register your Serial Number at:')
             lbl_msg.setStyleSheet('font-size: 12px;')
 
-            lbl_link = QLabel('<a href="https://frpkingdigitalstore.com" style="color: #004ec5;">frpkingdigitalstore.com</a>')
+            lbl_link = QLabel('<a href="" style="color: #004ec5;"></a>')
             lbl_link.setOpenExternalLinks(True)
             lbl_link.setStyleSheet('font-size: 12px;')
 
