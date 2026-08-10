@@ -28,7 +28,7 @@ except ImportError:
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QMessageBox, QDialog, QProgressBar
+    QLabel, QMessageBox, QDialog, QProgressBar, QCheckBox
 )
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer, Qt
 from PyQt5.QtGui import QPixmap, QIcon, QPainter, QColor, QFont, QPainterPath
@@ -266,6 +266,107 @@ class SuccessDialog(QDialog):
         right.addLayout(btn_row)
         layout.addLayout(right)
 
+# ========================== WIFI CONFIRMATION DIALOG (ENGLISH) ==========================
+class WifiConfirmationDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Wi-Fi Confirmation')
+        self.setFixedSize(420, 210)
+        self.setModal(True)
+        self.setStyleSheet("""
+            QDialog {
+                background: #ffffff;
+                border-radius: 12px;
+                border: 1px solid #adb3bd;
+            }
+            QLabel {
+                color: #1e1e2f;
+                background: transparent;
+                border: none;
+            }
+            QPushButton {
+                background-color: #004ec5;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 6px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0066ff;
+            }
+            QPushButton:disabled {
+                background-color: #adb3bd;
+                color: #666;
+            }
+            QPushButton#cancelBtn {
+                background-color: #e8edf3;
+                color: #4a5a6a;
+            }
+            QPushButton#cancelBtn:hover {
+                background-color: #d0d8e0;
+            }
+            QCheckBox {
+                color: #1e2a3a;
+                font-size: 13px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 20)
+        layout.setSpacing(12)
+
+        wifi_icon = QLabel('📶')
+        wifi_icon.setStyleSheet('font-size: 36px; background: transparent;')
+        wifi_icon.setAlignment(Qt.AlignCenter)
+        layout.addWidget(wifi_icon)
+
+        title = QLabel('Connect your device to Wi-Fi')
+        title.setStyleSheet('font-size: 14px; font-weight: bold;')
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        msg = QLabel(
+            'Before starting the activation, please ensure:\n'
+            '• Your iPhone/iPad is connected to a Wi-Fi network\n'
+            '• The device is unlocked (screen on)\n'
+            '• The USB cable is properly connected'
+        )
+        msg.setStyleSheet('font-size: 12px; color: #5a6a7a;')
+        msg.setAlignment(Qt.AlignCenter)
+        msg.setWordWrap(True)
+        layout.addWidget(msg)
+
+        self.checkbox = QCheckBox('I have connected my device to Wi-Fi')
+        self.checkbox.setStyleSheet('font-size: 13px;')
+        layout.addWidget(self.checkbox)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        cancel_btn = QPushButton('Cancel')
+        cancel_btn.setObjectName('cancelBtn')
+        cancel_btn.setFixedWidth(80)
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+
+        self.confirm_btn = QPushButton('Continue')
+        self.confirm_btn.setFixedWidth(80)
+        self.confirm_btn.setEnabled(False)
+        self.confirm_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(self.confirm_btn)
+
+        layout.addLayout(btn_layout)
+
+        self.checkbox.stateChanged.connect(self._on_checkbox_changed)
+
+    def _on_checkbox_changed(self, state):
+        self.confirm_btn.setEnabled(state == Qt.Checked)
+
 # ========================== ACTIVATION THREAD ==========================
 class ActivationThread(QThread):
     status  = pyqtSignal(str)
@@ -324,12 +425,7 @@ class ActivationThread(QThread):
             lockdown = create_using_usbmux()
             values   = lockdown.get_value()
 
-            # ======================================================
-            # SUPPRESSION DU TEST PRÉLIMINAIRE
-            # On lance toujours l'activation, même si ShouldHactivate est présent.
-            # Le succès sera vérifié dans la boucle d'essais.
-            # ======================================================
-
+            # Suppression du test préliminaire – on lance toujours l'activation
             sql_path = resource_path('payload.sql')
             if not os.path.exists(sql_path):
                 self.error.emit(f'Payload file not found: {sql_path}')
@@ -388,20 +484,17 @@ class MainWindow(QMainWindow):
         self.setFixedSize(500, 330)
         self.setContentsMargins(0, 0, 0, 0)
 
-        # ---- Fond supprimé ----
-        # On garde un fond de fenêtre gris clair
-
-        # ---- Logo comme icône ----
+        # Logo comme icône
         logo_path = resource_path('logo.png')
         if os.path.exists(logo_path):
             self.setWindowIcon(QIcon(logo_path))
 
-        # ---- Variables d'état ----
+        # Variables d'état
         self._device_info    = {}
         self._current_sn     = ''
         self._reported_udids = set()
 
-        # ---- Widgets ----
+        # Widgets
         self.status = QLabel('No device connected', self)
         self.status.setObjectName("statusLabel")
         self.status.setAlignment(Qt.AlignCenter)
@@ -422,7 +515,7 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self.progress.setVisible(False)
 
-        # --- Bouton Activate ---
+        # Bouton Activate
         self.activate = QPushButton('Activate Device', self)
         self.activate.setEnabled(False)
         self.activate.setStyleSheet("""
@@ -443,7 +536,7 @@ class MainWindow(QMainWindow):
             }
         """)
 
-        # ---- Layout ----
+        # Layout
         layout = QVBoxLayout()
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(6)
@@ -464,7 +557,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         central.setAttribute(Qt.WA_TranslucentBackground)
 
-        # ---- Style global ----
+        # Style global
         self.setStyleSheet("""
             QMainWindow { background: #f0f4f8; }
             QLabel { background-color: rgba(255,255,255,0.75); border-radius: 4px; padding: 2px 4px; }
@@ -482,7 +575,7 @@ class MainWindow(QMainWindow):
             }
         """)
 
-        # ---- Connexions ----
+        # Connexions
         self.activate.clicked.connect(self.start_activation)
 
         self._progress_timer = QTimer(self)
@@ -519,7 +612,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 app_uuid = udid
 
-            # ECID en décimal (valeur brute)
+            # ECID en décimal
             try:
                 chip_id = lockdown.get_value(key='UniqueChipID')
                 if isinstance(chip_id, int):
@@ -611,6 +704,13 @@ class MainWindow(QMainWindow):
             msg.exec_()
             return
 
+        # --- Wi-Fi confirmation dialog (English) ---
+        wifi_dlg = WifiConfirmationDialog(self)
+        if wifi_dlg.exec_() != QDialog.Accepted:
+            self.status.setText('Activation cancelled')
+            self.status.setVisible(True)
+            return
+
         self.status.setText('Checking SN...')
         self.status.setVisible(True)
         QApplication.processEvents()
@@ -651,7 +751,7 @@ class MainWindow(QMainWindow):
             lbl_sn = QLabel(f'Serial Number: <b>{self._current_sn}</b>')
             lbl_sn.setStyleSheet('font-size: 12px;')
 
-            lbl_msg = QLabel('Please register your Serial Number :')
+            lbl_msg = QLabel('Please register your Serial Number at:')
             lbl_msg.setStyleSheet('font-size: 12px;')
 
             lbl_link = QLabel('<a href="" style="color: #004ec5;"></a>')
