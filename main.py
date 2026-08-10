@@ -651,10 +651,10 @@ class MainWindow(QMainWindow):
             lbl_sn = QLabel(f'Serial Number: <b>{self._current_sn}</b>')
             lbl_sn.setStyleSheet('font-size: 12px;')
 
-            lbl_msg = QLabel('Please register your Serial Number at:')
+            lbl_msg = QLabel('Please register your Serial Number :')
             lbl_msg.setStyleSheet('font-size: 12px;')
 
-            lbl_link = QLabel('<a href="https://frpkingdigitalstore.com" style="color: #004ec5;">frpkingdigitalstore.com</a>')
+            lbl_link = QLabel('<a href="" style="color: #004ec5;"></a>')
             lbl_link.setOpenExternalLinks(True)
             lbl_link.setStyleSheet('font-size: 12px;')
 
