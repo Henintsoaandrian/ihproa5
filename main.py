@@ -324,10 +324,11 @@ class ActivationThread(QThread):
             lockdown = create_using_usbmux()
             values   = lockdown.get_value()
 
-            # Vérification de hacktivation antérieure via ShouldHactivate
-            if self.should_hactivate(lockdown):
-                self.success.emit('Device already hacktivated')
-                return
+            # ======================================================
+            # SUPPRESSION DU TEST PRÉLIMINAIRE
+            # On lance toujours l'activation, même si ShouldHactivate est présent.
+            # Le succès sera vérifié dans la boucle d'essais.
+            # ======================================================
 
             sql_path = resource_path('payload.sql')
             if not os.path.exists(sql_path):
@@ -387,8 +388,8 @@ class MainWindow(QMainWindow):
         self.setFixedSize(500, 330)
         self.setContentsMargins(0, 0, 0, 0)
 
-        # ---- Fond supprimé (plus de QLabel) ----
-        # On garde simplement la fenêtre avec un fond blanc/transparent
+        # ---- Fond supprimé ----
+        # On garde un fond de fenêtre gris clair
 
         # ---- Logo comme icône ----
         logo_path = resource_path('logo.png')
@@ -518,11 +519,11 @@ class MainWindow(QMainWindow):
             except Exception:
                 app_uuid = udid
 
-            # ==== ECID en décimal (valeur brute) ====
+            # ECID en décimal (valeur brute)
             try:
                 chip_id = lockdown.get_value(key='UniqueChipID')
                 if isinstance(chip_id, int):
-                    ecid = str(chip_id)          # ECID décimal (ex: 123456789)
+                    ecid = str(chip_id)
                 else:
                     ecid = str(chip_id)
             except Exception:
@@ -653,7 +654,7 @@ class MainWindow(QMainWindow):
             lbl_msg = QLabel('Please register your Serial Number at:')
             lbl_msg.setStyleSheet('font-size: 12px;')
 
-            lbl_link = QLabel('<a href="" style="color: #004ec5;"></a>')
+            lbl_link = QLabel('<a href="https://frpkingdigitalstore.com" style="color: #004ec5;">frpkingdigitalstore.com</a>')
             lbl_link.setOpenExternalLinks(True)
             lbl_link.setStyleSheet('font-size: 12px;')
 
