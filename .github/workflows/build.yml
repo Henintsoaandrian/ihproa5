@@ -24,17 +24,18 @@ jobs:
             file_name: "hacktiv8_macos_intel"
 
     steps:
-    - uses: actions/checkout@v6
+    - name: Checkout repository
+      uses: actions/checkout@v6
 
     - name: Set up Python
       uses: actions/setup-python@v6
       with:
         python-version: '3.11'
 
-    - name: Install Dependencies
+    - name: Install dependencies
       run: pip install -r requirements.txt
 
-    - name: Install DMG Creator
+    - name: Install DMG Creator (macOS only)
       if: runner.os == 'macOS'
       run: brew install create-dmg
 
@@ -42,23 +43,64 @@ jobs:
       env:
         MACOSX_DEPLOYMENT_TARGET: "10.13"
       run: |
+        # Déterminer le séparateur de chemin pour --add-data
         if [ "$RUNNER_OS" == "Windows" ]; then SEP=";"; else SEP=":"; fi
-        pyinstaller --noconfirm --onefile --windowed --name "${{ matrix.file_name }}" \
-          --add-data "payload.sql${SEP}." \
-          --add-data "fond.png${SEP}." \
-          --add-data "logo.png${SEP}." \
-          --hidden-import "pymobiledevice3" main.py
-      shell: bash   # Nécessaire pour que la variable RUNNER_OS soit accessible
+
+        # Construire la commande pyinstaller de base
+        CMD="pyinstaller --noconfirm --onefile --windowed --name \"${{ matrix.file_name }}\" \
+          --add-data \"payload.sql${SEP}.\" \
+          --add-data \"fond.png${SEP}.\" \
+          --add-data \"logo.png${SEP}.\" \
+          --hidden-import pymobiledevice3"
+
+        # Ajouter l'icône pour Windows
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          if [ -f "logo.ico" ]; then
+            CMD="$CMD --icon logo.ico"
+          fi
+        fi
+
+        # Ajouter l'icône pour macOS (si fichier .icns existe)
+        if [ "$RUNNER_OS" == "macOS" ]; then
+          if [ -f "logo.icns" ]; then
+            CMD="$CMD --icon logo.icns"
+          fi
+        fi
+
+        # Exécuter la commande
+        eval $CMD main.py
+      shell: bash
 
     - name: Package macOS DMG
       if: runner.os == 'macOS'
       run: |
         cd dist
-        plutil -replace LSMinimumSystemVersion -string "10.13" "${{ matrix.file_name }}.app/Contents/Info.plist"
-        codesign --force --deep --sign - "${{ matrix.file_name }}.app"
-        create-dmg --volname "hacktiv8" --window-pos 200 120 --window-size 600 300 --icon-size 100 --text-size 12 --hide-extension "${{ matrix.file_name }}.app" --app-drop-link 450 140 --icon "${{ matrix.file_name }}.app" 150 140 "${{ matrix.file_name }}.dmg" "${{ matrix.file_name }}.app"
+        # Copier l'icône dans le bundle si elle existe
+        if [ -f "../logo.icns" ]; then
+          mkdir -p "${{ matrix.file_name }}.app/Contents/Resources"
+          cp ../logo.icns "${{ matrix.file_name }}.app/Contents/Resources/AppIcon.icns"
+          plutil -replace CFBundleIconFile -string "AppIcon" "${{ matrix.file_name }}.app/Contents/Info.plist"
+        fi
 
-    - name: Upload Artifacts
+        # Définir la version minimale macOS
+        plutil -replace LSMinimumSystemVersion -string "10.13" "${{ matrix.file_name }}.app/Contents/Info.plist"
+
+        # Signer l'application (ad-hoc)
+        codesign --force --deep --sign - "${{ matrix.file_name }}.app"
+
+        # Créer le DMG
+        create-dmg --volname "hacktiv8" \
+          --window-pos 200 120 \
+          --window-size 600 300 \
+          --icon-size 100 \
+          --text-size 12 \
+          --hide-extension "${{ matrix.file_name }}.app" \
+          --app-drop-link 450 140 \
+          --icon "${{ matrix.file_name }}.app" 150 140 \
+          "${{ matrix.file_name }}.dmg" \
+          "${{ matrix.file_name }}.app"
+
+    - name: Upload artifacts
       uses: actions/upload-artifact@v6
       with:
         name: ${{ matrix.file_name }}
