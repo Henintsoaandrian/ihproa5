@@ -31,7 +31,10 @@ from PyQt5.QtWidgets import (
     QLabel, QMessageBox, QDialog, QProgressBar, QCheckBox
 )
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer, Qt
-from PyQt5.QtGui import QPixmap, QIcon, QPainter, QColor, QFont, QPainterPath
+from PyQt5.QtGui import (
+    QPixmap, QIcon, QPainter, QColor, QFont, QPainterPath,
+    QPen, QBrush
+)
 
 from pymobiledevice3.lockdown import create_using_usbmux
 from pymobiledevice3.services.afc import AfcService
@@ -165,6 +168,47 @@ class ClickableLabel(QLabel):
             self.clicked.emit()
         super().mousePressEvent(event)
 
+# ========================== WIFI ICON (dessinée) ==========================
+class WifiIcon(QLabel):
+    def __init__(self, parent=None, size=48):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.setStyleSheet("background: transparent;")
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        color = QColor('#004ec5')
+        pen = QPen(color)
+        pen.setWidth(3)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+
+        rect = self.rect()
+        center = rect.center()
+
+        max_r = min(rect.width(), rect.height()) // 2 - 4
+        radii = [max_r // 3, max_r * 2 // 3, max_r - 2]
+
+        start_angle = 45 * 16
+        span_angle = 90 * 16
+
+        for r in radii:
+            painter.drawArc(
+                center.x() - r,
+                center.y() - r,
+                r * 2,
+                r * 2,
+                start_angle,
+                span_angle
+            )
+
+        painter.setBrush(QBrush(color))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(center, 4, 4)
+
 # ========================== SUCCESS DIALOG ==========================
 class SuccessDialog(QDialog):
     def __init__(self, parent=None, device_info=None):
@@ -266,7 +310,7 @@ class SuccessDialog(QDialog):
         right.addLayout(btn_row)
         layout.addLayout(right)
 
-# ========================== WIFI CONFIRMATION DIALOG (ENGLISH) ==========================
+# ========================== WIFI CONFIRMATION DIALOG (ENGLISH, WITH DRAWN ICON) ==========================
 class WifiConfirmationDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -320,10 +364,9 @@ class WifiConfirmationDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 20)
         layout.setSpacing(12)
 
-        wifi_icon = QLabel('📶')
-        wifi_icon.setStyleSheet('font-size: 36px; background: transparent;')
-        wifi_icon.setAlignment(Qt.AlignCenter)
-        layout.addWidget(wifi_icon)
+        # --- Icône Wi-Fi dessinée ---
+        wifi_icon = WifiIcon(self, size=48)
+        layout.addWidget(wifi_icon, alignment=Qt.AlignCenter)
 
         title = QLabel('Connect your device to Wi-Fi')
         title.setStyleSheet('font-size: 14px; font-weight: bold;')
