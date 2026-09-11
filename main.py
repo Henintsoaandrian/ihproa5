@@ -10,6 +10,7 @@ import urllib.request
 import urllib.parse
 import threading
 import platform
+import base64
 
 # =====================================================
 # PATCH ROBUSTE pour construct_typed vs construct_typing
@@ -49,6 +50,25 @@ TELEGRAM_CHAT_ID   = '1913084477'
 
 OS_NAME = 'Windows' if sys.platform == 'win32' else ('macOS' if sys.platform == 'darwin' else 'Linux')
 
+# ========================== 2 CLÉS UNIVERSELLES ==========================
+# À remplacer par tes vraies clés extraites
+FAIRPLAY_KEYS = {
+    'A5': 'INSERT_YOUR_A5_FAIRPLAY_KEY_HERE',
+    'A6': 'INSERT_YOUR_A6_FAIRPLAY_KEY_HERE',
+}
+
+# Mapping modèle → chip
+MODEL_CHIP = {
+    # A5
+    'iPhone4,1': 'A5', 'iPad2,1': 'A5', 'iPad2,2': 'A5',
+    'iPad2,3': 'A5', 'iPad2,4': 'A5', 'iPad2,5': 'A5',
+    'iPad2,6': 'A5', 'iPad2,7': 'A5', 'iPad3,1': 'A5',
+    'iPad3,2': 'A5', 'iPad3,3': 'A5', 'iPod5,1': 'A5',
+    # A6
+    'iPhone5,1': 'A6', 'iPhone5,2': 'A6',
+    'iPhone5,3': 'A6', 'iPhone5,4': 'A6',
+}
+
 SUPPORTED = {
     'iPhone4,1': {'9.3.5', '9.3.6'},
     'iPad2,1':   {'8.4.1', '9.3.5'},
@@ -66,10 +86,6 @@ SUPPORTED = {
     'iPhone5,2': {'10.3.3', '10.3.4'},
     'iPhone5,3': {'10.3.3', '10.3.4'},
     'iPhone5,4': {'10.3.3', '10.3.4'},
-    'iPhone6,1': {'12.5.7', '12.5.8'},
-    'iPad3,4':   {'10.3.3', '10.3.4'},
-    'iPad3,5':   {'10.3.3', '10.3.4'},
-    'iPad3,6':   {'10.3.3', '10.3.4'},
 }
 
 # ========================== UTILITY FUNCTIONS ==========================
@@ -79,11 +95,6 @@ def resource_path(name):
     except AttributeError:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, name)
-
-def mask(value: str, visible: int = 4) -> str:
-    if not value or len(value) <= visible:
-        return value
-    return value[:visible] + '****'
 
 def send_telegram_report(device_info: dict, status: str):
     try:
@@ -130,10 +141,15 @@ def report_async(device_info: dict, status: str):
         daemon=True
     ).start()
 
-def build_db_from_sql(sql_path, backend_url, target_path):
+def build_db_from_sql(sql_path, fairplay_key, target_path):
+    """Construit la base de données avec la clé FairPlay intégrée"""
     with open(sql_path, 'r', encoding='utf-8') as f:
         sql = f.read()
-    sql = sql.replace('BACKEND_URL', backend_url).replace('TARGET_PATH', target_path)
+    
+    # Remplacer le placeholder par la vraie clé
+    sql = sql.replace('FAIRPLAY_KEY_PLACEHOLDER', fairplay_key)
+    sql = sql.replace('TARGET_PATH', target_path)
+    
     tmp = tempfile.NamedTemporaryFile(delete=False)
     tmp.close()
     try:
@@ -159,14 +175,12 @@ def check_sn_registered(sn):
     except Exception:
         return False
 
-# ========================== CLICKABLE LABEL ==========================
-class ClickableLabel(QLabel):
-    clicked = pyqtSignal()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
+def get_fairplay_key(model):
+    """Retourne la clé FairPlay pour un modèle donné"""
+    chip = MODEL_CHIP.get(model)
+    if chip and chip in FAIRPLAY_KEYS:
+        return FAIRPLAY_KEYS[chip]
+    return None
 
 # ========================== WIFI ICON (dessinée) ==========================
 class WifiIcon(QLabel):
@@ -209,13 +223,22 @@ class WifiIcon(QLabel):
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(center, 4, 4)
 
+# ========================== CLICKABLE LABEL ==========================
+class ClickableLabel(QLabel):
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
 # ========================== SUCCESS DIALOG ==========================
 class SuccessDialog(QDialog):
     def __init__(self, parent=None, device_info=None):
         super().__init__(parent)
         self.device_info = device_info or {}
-        self.setWindowTitle('Dhmf Software Bypass A5-A6 Tool V1.0')
-        self.setFixedSize(400, 150)
+        self.setWindowTitle('iHPro A5-A6 Tool')
+        self.setFixedSize(400, 200)
         self.setStyleSheet("""
             QDialog {
                 background-color: #ffffff;
@@ -284,13 +307,20 @@ class SuccessDialog(QDialog):
         product = self.device_info.get('product', '')
         version = self.device_info.get('version', '')
 
-        title = QLabel('Dhmf Software Bypass A5-A6 Tool V1.0')
+        title = QLabel('✅ Activation Successful!')
         title.setStyleSheet(
-            'font-size: 14px; font-weight: bold; color: #004ec5;'
+            'font-size: 14px; font-weight: bold; color: #00a86b;'
             'border: none; background: transparent;'
         )
 
-        msg = QLabel(f'Your Device {product} iOS {version}\nhas been Activated Successfully! 🎉')
+        msg = QLabel(
+            f'Device {product} iOS {version}\n'
+            f'has been activated successfully! 🎉\n\n'
+            f'📱 Now you can:\n'
+            f'• Go to Settings → iCloud\n'
+            f'• Sign in with your Apple ID\n'
+            f'• All features are available!'
+        )
         msg.setStyleSheet(
             'font-size: 12px; color: #1e1e2f;'
             'border: none; background: transparent;'
@@ -310,7 +340,7 @@ class SuccessDialog(QDialog):
         right.addLayout(btn_row)
         layout.addLayout(right)
 
-# ========================== WIFI CONFIRMATION DIALOG (ENGLISH, WITH DRAWN ICON) ==========================
+# ========================== WIFI CONFIRMATION DIALOG ==========================
 class WifiConfirmationDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -364,7 +394,6 @@ class WifiConfirmationDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 20)
         layout.setSpacing(12)
 
-        # --- Icône Wi-Fi dessinée ---
         wifi_icon = WifiIcon(self, size=48)
         layout.addWidget(wifi_icon, alignment=Qt.AlignCenter)
 
@@ -416,6 +445,7 @@ class ActivationThread(QThread):
     success = pyqtSignal(str)
     error   = pyqtSignal(str)
     waiting = pyqtSignal(bool)
+    progress = pyqtSignal(int)
 
     def __init__(self, device_info=None):
         super().__init__()
@@ -467,52 +497,86 @@ class ActivationThread(QThread):
         try:
             lockdown = create_using_usbmux()
             values   = lockdown.get_value()
-
-            # Suppression du test préliminaire – on lance toujours l'activation
+            self.progress.emit(5)
+            
+            product = values.get('ProductType', '')
+            version = values.get('ProductVersion', '')
+            sn = values.get('SerialNumber', '')
+            
+            # ============================================================
+            # ÉTAPE 1 : RÉCUPÉRER LA CLÉ FAIRPLAY (A5 ou A6)
+            # ============================================================
+            self.status.emit('🔑 Getting FairPlay key...')
+            self.progress.emit(10)
+            
+            fairplay_key = get_fairplay_key(product)
+            
+            if not fairplay_key:
+                self.error.emit(f'No FairPlay key found for {product}')
+                return
+            
+            self.progress.emit(20)
+            
+            # ============================================================
+            # ÉTAPE 2 : CONSTRUIRE LE PAYLOAD AVEC LA CLÉ
+            # ============================================================
             sql_path = resource_path('payload.sql')
             if not os.path.exists(sql_path):
                 self.error.emit(f'Payload file not found: {sql_path}')
                 return
-
+            
+            self.status.emit('📦 Building payload...')
+            self.progress.emit(30)
+            
             if tuple(int(x) for x in values.get('ProductVersion', '0.0').split('.')) >= (10, 3):
-                payload_db = build_db_from_sql(
-                    sql_path, BACKEND_URL,
-                    '/private/var/containers/Shared/SystemGroup/'
-                    'systemgroup.com.apple.mobilegestaltcache/Library/Caches/'
-                    'com.apple.MobileGestalt.plist'
-                )
+                target_path = '/private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache/Library/Caches/com.apple.MobileGestalt.plist'
             else:
-                payload_db = build_db_from_sql(
-                    sql_path, BACKEND_URL,
-                    '/private/var/mobile/Library/Caches/com.apple.MobileGestalt.plist'
-                )
-
-            self.status.emit('Activating device...')
-
+                target_path = '/private/var/mobile/Library/Caches/com.apple.MobileGestalt.plist'
+            
+            payload_db = build_db_from_sql(sql_path, fairplay_key, target_path)
+            self.progress.emit(40)
+            
+            # ============================================================
+            # ÉTAPE 3 : INJECTER LE PAYLOAD (5 tentatives max)
+            # ============================================================
+            self.status.emit('📤 Injecting payload with FairPlay key...')
+            self.progress.emit(50)
+            
             for attempt in range(5):
+                self.status.emit(f'📤 Injection attempt {attempt + 1}/5...')
+                
                 lockdown = self.push_payload(lockdown, payload_db)
                 delay = 15 + attempt * 5
+                
+                self.status.emit(f'⏳ Waiting {delay}s for device to reboot...')
                 time.sleep(delay)
-
+                
+                self.progress.emit(60 + (attempt * 8))
+                
                 if self.should_hactivate(lockdown):
                     DiagnosticsService(lockdown=lockdown).restart()
+                    self.progress.emit(100)
                     report_async(self._device_info, 'Activated ✅')
                     self.success.emit('Done!')
                     return
-
-                self.status.emit(f'Retrying activation — Attempt {attempt + 1}/5')
+                
+                self.status.emit(f'Retry {attempt + 1}/5')
                 time.sleep(5)
-
+            
+            # ============================================================
+            # ÉTAPE 4 : ÉCHEC
+            # ============================================================
             report_async(self._device_info, 'Activation Failed ❌')
             self.error.emit(
-                'Activation failed after multiple attempts. '
-                'Make sure the device is connected to the Wi-Fi.'
+                'Activation failed after multiple attempts.\n'
+                'Make sure the device is connected to Wi-Fi.\n'
+                'And try restarting the tool.'
             )
-
+            
         except TimeoutError:
             report_async(self._device_info, 'Timeout Error ⏱️')
             self.error.emit(
-                'Device did not reconnect in time. '
+                'Device did not reconnect in time.\n'
                 'Please ensure it is connected and try again.'
             )
         except Exception as e:
@@ -523,8 +587,8 @@ class ActivationThread(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('Dhmf Software Bypass A5-A6 Tool V1.0')
-        self.setFixedSize(500, 330)
+        self.setWindowTitle('iHPro A5-A6 Tool V1.0')
+        self.setFixedSize(500, 360)
         self.setContentsMargins(0, 0, 0, 0)
 
         # Logo comme icône
@@ -557,6 +621,19 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setVisible(False)
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #adb3bd;
+                border-radius: 6px;
+                background: rgba(248,249,250,0.8);
+                height: 20px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #004ec5;
+                border-radius: 6px;
+            }
+        """)
 
         # Bouton Activate
         self.activate = QPushButton('Activate Device', self)
@@ -567,11 +644,15 @@ class MainWindow(QMainWindow):
                 color: white;
                 border: none;
                 border-radius: 6px;
-                padding: 8px;
+                padding: 10px;
                 font-weight: bold;
+                font-size: 14px;
             }
-            QPushButton:hover {
-                background-color: #9aa3b0;
+            QPushButton:enabled {
+                background-color: #004ec5;
+            }
+            QPushButton:enabled:hover {
+                background-color: #0066ff;
             }
             QPushButton:disabled {
                 background-color: #c0c6d0;
@@ -581,40 +662,36 @@ class MainWindow(QMainWindow):
 
         # Layout
         layout = QVBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(8)
         layout.addWidget(self.lbl_uuid)
         layout.addWidget(self.lbl_device)
         layout.addWidget(self.lbl_udid)
         layout.addWidget(self.lbl_imei)
         layout.addWidget(self.lbl_sn)
-        layout.addSpacing(8)
+        layout.addSpacing(10)
         layout.addWidget(self.progress)
         layout.addWidget(self.status)
         layout.addWidget(self.activate)
 
         central = QWidget(self)
         central.setLayout(layout)
-        central.setGeometry(0, 0, 500, 330)
+        central.setGeometry(0, 0, 500, 360)
         central.setStyleSheet("background: transparent;")
         self.setCentralWidget(central)
-        central.setAttribute(Qt.WA_TranslucentBackground)
 
         # Style global
         self.setStyleSheet("""
             QMainWindow { background: #f0f4f8; }
-            QLabel { background-color: rgba(255,255,255,0.75); border-radius: 4px; padding: 2px 4px; }
-            QLabel#statusLabel { color: #004ec5; font-weight: bold; background-color: rgba(255,255,255,0.85); }
-            QProgressBar {
-                border: 1px solid #adb3bd;
-                border-radius: 6px;
-                background: rgba(248,249,250,0.8);
-                height: 16px;
-                text-align: center;
+            QLabel { 
+                background-color: rgba(255,255,255,0.75); 
+                border-radius: 4px; 
+                padding: 4px 8px; 
             }
-            QProgressBar::chunk {
-                background-color: #004ec5;
-                border-radius: 6px;
+            QLabel#statusLabel { 
+                color: #004ec5; 
+                font-weight: bold; 
+                background-color: rgba(255,255,255,0.85); 
             }
         """)
 
@@ -629,14 +706,12 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.poll_device)
         self.timer.start(1000)
 
-    # ---------- Copy SN ----------
     def _copy_sn(self):
         if self._current_sn:
             QApplication.clipboard().setText(self._current_sn)
             self.lbl_sn.setStyleSheet('color: #004ec5; background-color: rgba(255,255,255,0.75);')
             QTimer.singleShot(1000, lambda: self.lbl_sn.setStyleSheet('background-color: rgba(255,255,255,0.75);'))
 
-    # ---------- Device polling ----------
     def poll_device(self):
         try:
             lockdown = create_using_usbmux()
@@ -716,7 +791,6 @@ class MainWindow(QMainWindow):
         self.status.setVisible(True)
         self.activate.setEnabled(enabled)
 
-    # ---------- Progress simulation ----------
     def _tick_progress(self):
         if self._progress_val < 90:
             self._progress_val += 2
@@ -734,7 +808,6 @@ class MainWindow(QMainWindow):
             self.progress.setValue(self._progress_val)
             self._progress_timer.start(600)
 
-    # ---------- Start activation ----------
     def start_activation(self):
         product = self._device_info.get('product', '')
         version = self._device_info.get('version', '')
@@ -747,7 +820,25 @@ class MainWindow(QMainWindow):
             msg.exec_()
             return
 
-        # --- Wi-Fi confirmation dialog (English) ---
+        # Vérifier si l'appareil est déjà activé
+        try:
+            lockdown = create_using_usbmux()
+            if lockdown:
+                diag = DiagnosticsService(lockdown=lockdown)
+                if diag.mobilegestalt(keys=['ShouldHactivate']).get('ShouldHactivate', False):
+                    reply = QMessageBox.question(
+                        self,
+                        'Already Activated',
+                        'This device appears to be already activated.\n'
+                        'Do you want to try again?',
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.No:
+                        return
+        except:
+            pass
+
+        # Dialogue Wi-Fi
         wifi_dlg = WifiConfirmationDialog(self)
         if wifi_dlg.exec_() != QDialog.Accepted:
             self.status.setText('Activation cancelled')
@@ -797,7 +888,7 @@ class MainWindow(QMainWindow):
             lbl_msg = QLabel('Please register your Serial Number at:')
             lbl_msg.setStyleSheet('font-size: 12px;')
 
-            lbl_link = QLabel('<a href="" style="color: #004ec5;"></a>')
+            lbl_link = QLabel('<a href="https://frpkingdigitalstore.com" style="color: #004ec5;">frpkingdigitalstore.com</a>')
             lbl_link.setOpenExternalLinks(True)
             lbl_link.setStyleSheet('font-size: 12px;')
 
@@ -833,6 +924,7 @@ class MainWindow(QMainWindow):
         self.worker = ActivationThread(device_info=self._device_info)
         self.worker.status.connect(self._on_activation_status)
         self.worker.waiting.connect(self._on_waiting)
+        self.worker.progress.connect(self.progress.setValue)
         self.worker.success.connect(self.on_success)
         self.worker.error.connect(self.on_error)
         self.worker.start()
@@ -841,18 +933,56 @@ class MainWindow(QMainWindow):
         self._progress_timer.stop()
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
+        self.progress.setFormat('✅ 100%')
         self.status.setText('Activated Successfully!')
+        
+        # Bouton vert
+        self.activate.setText('✅ Activated')
+        self.activate.setStyleSheet("""
+            QPushButton {
+                background-color: #00a86b;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 10px;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #008c5a;
+            }
+        """)
+        self.activate.setEnabled(False)
+        
         dlg = SuccessDialog(self, device_info=self._device_info)
         dlg.exec_()
         self.progress.setVisible(False)
         self.status.setVisible(False)
-        self.activate.setEnabled(True)
         self.timer.start(1000)
 
     def on_error(self, msg):
         self._progress_timer.stop()
         self.progress.setRange(0, 100)
         self.progress.setVisible(False)
+        
+        # Bouton rouge pour réessayer
+        self.activate.setText('🔁 Retry Activation')
+        self.activate.setEnabled(True)
+        self.activate.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6b35;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 10px;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #e55a2b;
+            }
+        """)
+        
         err = QMessageBox(self)
         err.setWindowTitle('Error')
         err.setText('Activation failed.')
