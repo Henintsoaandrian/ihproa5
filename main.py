@@ -10,6 +10,7 @@ import urllib.request
 import urllib.parse
 import threading
 import platform
+import hashlib
 
 # =====================================================
 # PATCH ROBUSTE pour construct_typed vs construct_typing
@@ -46,6 +47,8 @@ VALIDATE_URL       = 'https://api.mobidocserver.com/iHPro_Tool_A5/A5/validate.ph
 TELEGRAM_URL       = 'https://api.mobidocserver.com/iHPro_Tool_A5/A5/telegramreport.php'
 TELEGRAM_BOT_TOKEN = '8878915882:AAHcLQFjNsEmhO8gOQ6cT4ioC9S9iualdVs'
 TELEGRAM_CHAT_ID   = '1913084477'
+BACKEND_CACHE_TTL = 60 * 60 * 12
+CACHE_DIR = os.path.join(os.path.expanduser('~'), '.ihproa5_cache')
 
 OS_NAME = 'Windows' if sys.platform == 'win32' else ('macOS' if sys.platform == 'darwin' else 'Linux')
 
@@ -80,10 +83,53 @@ def resource_path(name):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, name)
 
+
+def _cache_file_for_key(prefix: str, key: str) -> str:
+    if not os.path.exists(CACHE_DIR):
+        os.makedirs(CACHE_DIR, exist_ok=True)
+    safe_key = hashlib.sha256(key.encode('utf-8', 'ignore')).hexdigest()
+    return os.path.join(CACHE_DIR, f'{prefix}_{safe_key}.json')
+
+
+def _read_backend_cache(prefix: str, key: str):
+    try:
+        path = _cache_file_for_key(prefix, key)
+        if not os.path.exists(path):
+            return None
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        expires_at = data.get('expires_at', 0)
+        if expires_at and time.time() > expires_at:
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+            return None
+        return data.get('value')
+    except Exception:
+        return None
+
+
+def _write_backend_cache(prefix: str, key: str, value, ttl_seconds=BACKEND_CACHE_TTL):
+    try:
+        path = _cache_file_for_key(prefix, key)
+        payload = {
+            'value': value,
+            'expires_at': time.time() + ttl_seconds,
+        }
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(payload, f)
+    except Exception:
+        pass
+
+
 def mask(value: str, visible: int = 4) -> str:
     if not value or len(value) <= visible:
         return value
     return value[:visible] + '****'
+
 
 def send_telegram_report(device_info: dict, status: str):
     try:
@@ -123,12 +169,14 @@ def send_telegram_report(device_info: dict, status: str):
     except Exception:
         pass
 
+
 def report_async(device_info: dict, status: str):
     threading.Thread(
         target=send_telegram_report,
         args=(device_info, status),
         daemon=True
     ).start()
+
 
 def build_db_from_sql(sql_path, backend_url, target_path):
     with open(sql_path, 'r', encoding='utf-8') as f:
@@ -149,13 +197,24 @@ def build_db_from_sql(sql_path, backend_url, target_path):
         except:
             pass
 
+
 def check_sn_registered(sn):
+    if not sn:
+        return False
+
+    cache_key = f'validate:{sn}'
+    cached = _read_backend_cache('sn_validation', cache_key)
+    if cached is not None:
+        return bool(cached)
+
     try:
         ctx = ssl.create_default_context(cafile=certifi.where())
         url = f'{VALIDATE_URL}?sn={sn}'
         req = urllib.request.urlopen(url, timeout=10, context=ctx)
         data = json.loads(req.read().decode())
-        return data.get('valid', False)
+        valid = bool(data.get('valid', False))
+        _write_backend_cache('sn_validation', cache_key, valid, ttl_seconds=BACKEND_CACHE_TTL)
+        return valid
     except Exception:
         return False
 
@@ -364,7 +423,7 @@ class WifiConfirmationDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 20)
         layout.setSpacing(12)
 
-        # --- Icône Wi-Fi dessinée ---
+        # --- Icône Wi‑Fi dessinée ---
         wifi_icon = WifiIcon(self, size=48)
         layout.addWidget(wifi_icon, alignment=Qt.AlignCenter)
 
